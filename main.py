@@ -51,46 +51,42 @@ class LeadUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
 
-async def process_lead_through_agents(lead_data: dict, client_config: dict):
-    """Process new lead through the LangGraph agent system"""
+async def send_auto_response(lead_data: dict):
+    """Send auto-response email to new lead"""
     try:
         from integrations.email import send_email
-        from agents.orchestrator import get_app_graph
+        from integrations.supabase_client import update_lead
         
-        state = {
-            "lead_id": lead_data.get("id"),
-            "name": lead_data.get("name", ""),
-            "email": lead_data.get("email", ""),
-            "phone": lead_data.get("phone", ""),
-            "source": lead_data.get("source", "website"),
-            "message": lead_data.get("message", ""),
-            "channel": "email",
-            "status": "new",
-            "follow_up_count": 0,
-            "last_contact": datetime.utcnow().isoformat(),
-            "next_action": "speed_to_lead",
-            "conversation_history": [],
-            "interest_score": 50,
-            "client_id": lead_data.get("client_id", ""),
-            "client_config": client_config
-        }
+        name = lead_data.get("name", "there")
+        email = lead_data.get("email", "")
+        service = lead_data.get("service", "our services")
+        message = lead_data.get("message", "")
         
-        print(f"[AGENT] Processing lead: {state['name']} ({state['email']})")
+        # Generate response
+        response_text = f"Hi {name}! Thanks for reaching out about {service}. We've received your message and will be in touch within 24 hours to discuss how we can help."
         
-        graph = get_app_graph()
-        result = await graph.ainvoke(state)
+        # Send email
+        await send_email(
+            to=email,
+            subject=f"Thanks for contacting us, {name}!",
+            body=response_text
+        )
         
-        print(f"[AGENT] Processing complete for lead: {lead_data.get('name')}")
-        return result
+        # Update lead status
+        supabase.table("leads").update({
+            "status": "contacted",
+            "last_contact": datetime.utcnow().isoformat()
+        }).eq("id", lead_data.get("id")).execute()
+        
+        print(f"[AUTO-RESPONSE] Sent to {name} ({email})")
+        return True
     except Exception as e:
-        print(f"[AGENT ERROR] {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        print(f"[AUTO-RESPONSE ERROR] {e}")
+        return False
 
 @app.post("/webhook/new-lead")
 async def receive_lead(lead_input: LeadInput):
-    """Webhook to receive leads - saves to database and triggers agent processing"""
+    """Webhook to receive leads - saves to database and sends auto-response"""
     try:
         lead_data = {
             "client_id": lead_input.client_id,
@@ -110,26 +106,15 @@ async def receive_lead(lead_input: LeadInput):
 
         if response.data:
             lead_id = response.data[0].get("id")
-            print(f"[WEBHOOK] Lead saved: {lead_id}")
+            lead_data["id"] = lead_id
             
-            try:
-                client_response = supabase.table("clients").select("config").eq("id", lead_input.client_id).execute()
-                client_config = client_response.data[0].get("config", {}) if client_response.data else {}
-            except Exception as e:
-                print(f"[WEBHOOK] Error getting client: {e}")
-                client_config = {}
-            
-            asyncio.create_task(
-                process_lead_through_agents(
-                    {**lead_data, "id": lead_id},
-                    client_config
-                )
-            )
+            # Send auto-response asynchronously
+            asyncio.create_task(send_auto_response(lead_data))
 
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "message": "Lead received and processing started"
+                "message": "Lead received! Auto-response will be sent shortly."
             }
 
         return {"status": "processed", "message": "Lead saved"}
@@ -299,47 +284,6 @@ async def get_leads():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/leads/{lead_id}/followup")
-async def send_followup(lead_id: str):
-    """Manually trigger follow-up for a lead"""
-    try:
-        from agents.follow_up_engine import follow_up_agent
-        
-        lead = supabase.table("leads").select("*").eq("id", lead_id).execute()
-        if not lead.data:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        
-        lead_data = lead.data[0]
-        
-        client = supabase.table("clients").select("config").eq("id", lead_data.get("client_id")).execute()
-        client_config = client.data[0].get("config", {}) if client.data else {}
-        
-        state = {
-            "lead_id": lead_data["id"],
-            "name": lead_data.get("name", ""),
-            "email": lead_data.get("email", ""),
-            "phone": lead_data.get("phone", ""),
-            "source": lead_data.get("source", ""),
-            "message": lead_data.get("original_message", ""),
-            "channel": lead_data.get("channel", "email"),
-            "status": lead_data.get("status", "contacted"),
-            "follow_up_count": lead_data.get("follow_up_count", 0),
-            "last_contact": lead_data.get("last_contact", datetime.utcnow().isoformat()),
-            "next_action": "follow_up",
-            "conversation_history": [],
-            "interest_score": lead_data.get("interest_score", 50),
-            "client_id": lead_data.get("client_id", ""),
-            "client_config": client_config
-        }
-        
-        result = await follow_up_agent(state)
-        
-        return {"status": "sent", "result": result}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.get("/test-email")
 async def test_email():
     """Test sending an email"""
@@ -367,22 +311,7 @@ async def health_check():
 
 @app.on_event("startup")
 async def startup():
-    """Start background scheduler"""
-    asyncio.create_task(check_followups())
     print("Lead Conversion System started!")
-
-async def check_followups():
-    """Check for leads needing follow-up (runs every hour)"""
-    from agents.scheduler import process_due_followups
-    
-    while True:
-        try:
-            print(f"[SCHEDULER] Checking follow-ups at {datetime.utcnow().isoformat()}")
-            await process_due_followups()
-            await asyncio.sleep(3600)
-        except Exception as e:
-            print(f"[SCHEDULER] Error: {e}")
-            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     import uvicorn
