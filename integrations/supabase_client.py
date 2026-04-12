@@ -79,7 +79,7 @@ async def get_leads(
         return []
     
     try:
-        query = supabase.table("leads").select("*")
+        query = supabase.table("lead_conversion_contacts").select("*")
         
         if client_id:
             query = query.eq("client_id", client_id)
@@ -109,7 +109,7 @@ async def create_lead(lead_data: Dict) -> Dict:
         return {}
     
     try:
-        response = supabase.table("leads").insert(lead_data).execute()
+        response = supabase.table("lead_conversion_contacts").insert(lead_data).execute()
         return response.data[0] if response.data else {}
     except Exception as e:
         print(f"Error creating lead: {e}")
@@ -125,7 +125,7 @@ async def update_lead(lead_id: str, data: Dict) -> Optional[Dict]:
         # Add updated_at timestamp
         data["updated_at"] = datetime.utcnow().isoformat()
         
-        response = supabase.table("leads").update(data).eq("id", lead_id).execute()
+        response = supabase.table("lead_conversion_contacts").update(data).eq("id", lead_id).execute()
         return response.data[0] if response.data else None
     except Exception as e:
         print(f"Error updating lead: {e}")
