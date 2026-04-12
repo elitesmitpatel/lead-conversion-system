@@ -72,8 +72,13 @@ async def send_auto_email(to_email: str, name: str, service: str, message: str):
     try:
         import resend
         api_key = os.getenv("RESEND_API_KEY")
-        if not api_key or api_key == "re_test":
-            print(f"[EMAIL] Would send to {to_email}: Thanks for contacting us!")
+        
+        if not api_key:
+            print(f"[EMAIL] No API key configured")
+            return None
+        
+        if api_key == "re_test":
+            print(f"[EMAIL] Test mode - would send to {to_email}")
             return {"id": "test-email"}
         
         resend.api_key = api_key
@@ -82,11 +87,12 @@ async def send_auto_email(to_email: str, name: str, service: str, message: str):
         body = await generate_auto_response(name, service, message)
         
         email = resend.Email.send({
-            "from": "Lead System <onboarding@resend.dev>",
+            "from": "onboarding@resend.dev",
             "to": to_email,
             "subject": subject,
             "html": f"<p>Hi {name},</p><p>{body}</p><p>Best regards,<br>The Team</p>"
         })
+        print(f"[EMAIL] Sent to {to_email}: {email}")
         return email
     
     except Exception as e:
