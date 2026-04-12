@@ -54,6 +54,7 @@ class LeadUpdate(BaseModel):
 async def process_lead_through_agents(lead_data: dict, client_config: dict):
     """Process new lead through the LangGraph agent system"""
     try:
+        from integrations.email import send_email
         from agents.orchestrator import get_app_graph
         
         state = {
@@ -74,11 +75,17 @@ async def process_lead_through_agents(lead_data: dict, client_config: dict):
             "client_config": client_config
         }
         
+        print(f"[AGENT] Processing lead: {state['name']} ({state['email']})")
+        
         graph = get_app_graph()
         result = await graph.ainvoke(state)
+        
+        print(f"[AGENT] Processing complete for lead: {lead_data.get('name')}")
         return result
     except Exception as e:
-        print(f"Agent processing error: {e}")
+        print(f"[AGENT ERROR] {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 @app.post("/webhook/new-lead")
@@ -103,10 +110,14 @@ async def receive_lead(lead_input: LeadInput):
 
         if response.data:
             lead_id = response.data[0].get("id")
+            print(f"[WEBHOOK] Lead saved: {lead_id}")
             
-            from integrations.supabase_client import get_client
-            client = await get_client(lead_input.client_id)
-            client_config = client.get("config", {}) if client else {}
+            try:
+                client_response = supabase.table("clients").select("config").eq("id", lead_input.client_id).execute()
+                client_config = client_response.data[0].get("config", {}) if client_response.data else {}
+            except Exception as e:
+                print(f"[WEBHOOK] Error getting client: {e}")
+                client_config = {}
             
             asyncio.create_task(
                 process_lead_through_agents(
@@ -124,7 +135,9 @@ async def receive_lead(lead_input: LeadInput):
         return {"status": "processed", "message": "Lead saved"}
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[WEBHOOK ERROR] {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
@@ -291,30 +304,31 @@ async def send_followup(lead_id: str):
     """Manually trigger follow-up for a lead"""
     try:
         from agents.follow_up_engine import follow_up_agent
-        from integrations.supabase_client import get_lead, get_client
         
-        lead = await get_lead(lead_id)
-        if not lead:
+        lead = supabase.table("leads").select("*").eq("id", lead_id).execute()
+        if not lead.data:
             raise HTTPException(status_code=404, detail="Lead not found")
         
-        client = await get_client(lead.get("client_id", ""))
-        client_config = client.get("config", {}) if client else {}
+        lead_data = lead.data[0]
+        
+        client = supabase.table("clients").select("config").eq("id", lead_data.get("client_id")).execute()
+        client_config = client.data[0].get("config", {}) if client.data else {}
         
         state = {
-            "lead_id": lead["id"],
-            "name": lead.get("name", ""),
-            "email": lead.get("email", ""),
-            "phone": lead.get("phone", ""),
-            "source": lead.get("source", ""),
-            "message": lead.get("original_message", ""),
-            "channel": lead.get("channel", "email"),
-            "status": lead.get("status", "contacted"),
-            "follow_up_count": lead.get("follow_up_count", 0),
-            "last_contact": lead.get("last_contact", datetime.utcnow().isoformat()),
+            "lead_id": lead_data["id"],
+            "name": lead_data.get("name", ""),
+            "email": lead_data.get("email", ""),
+            "phone": lead_data.get("phone", ""),
+            "source": lead_data.get("source", ""),
+            "message": lead_data.get("original_message", ""),
+            "channel": lead_data.get("channel", "email"),
+            "status": lead_data.get("status", "contacted"),
+            "follow_up_count": lead_data.get("follow_up_count", 0),
+            "last_contact": lead_data.get("last_contact", datetime.utcnow().isoformat()),
             "next_action": "follow_up",
             "conversation_history": [],
-            "interest_score": lead.get("interest_score", 50),
-            "client_id": lead.get("client_id", ""),
+            "interest_score": lead_data.get("interest_score", 50),
+            "client_id": lead_data.get("client_id", ""),
             "client_config": client_config
         }
         
@@ -322,6 +336,8 @@ async def send_followup(lead_id: str):
         
         return {"status": "sent", "result": result}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/test-email")
