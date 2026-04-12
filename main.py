@@ -47,7 +47,7 @@ async def receive_lead(lead_input: LeadInput):
             "message": lead_input.message
         }
         
-        response = supabase.table("lead_conversion_contacts").insert(lead_data).execute()
+        response = supabase.table("contacts").insert(lead_data).execute()
         
         if response.data:
             lead_id = response.data[0].get("id")
