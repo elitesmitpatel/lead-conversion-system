@@ -20,6 +20,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Debug: Print environment variables on startup
+gemini_key = os.getenv("GEMINI_API_KEY") or ""
+resend_key = os.getenv("RESEND_API_KEY") or ""
+print(f"GEMINI_API_KEY: {gemini_key[:20] if gemini_key else 'NOT SET'}")
+print(f"RESEND_API_KEY: {resend_key[:20] if resend_key else 'NOT SET'}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
