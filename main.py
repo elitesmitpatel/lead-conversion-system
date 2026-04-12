@@ -102,8 +102,7 @@ async def receive_lead(lead_input: LeadInput):
             "email": lead_input.email,
             "company": lead_input.company or "",
             "service": lead_input.service or "",
-            "message": lead_input.message,
-            "status": "new"
+            "message": lead_input.message
         }
         
         response = supabase.table("contacts").insert(lead_data).execute()
