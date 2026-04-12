@@ -175,6 +175,31 @@ async def debug_env():
         "resend_key_value": os.getenv("RESEND_API_KEY", "NOT SET")[:15] + "..."
     }
 
+@app.get("/test-email")
+async def test_email():
+    """Test sending an email"""
+    try:
+        import resend
+        api_key = os.getenv("RESEND_API_KEY")
+        
+        if not api_key:
+            return {"error": "No RESEND_API_KEY"}
+        
+        resend.api_key = api_key
+        
+        # Send test email
+        email = resend.Email.send({
+            "from": "onboarding@resend.dev",
+            "to": "elitesmit@gmail.com",
+            "subject": "Test Email from Lead System",
+            "html": "<p>This is a test email.</p>"
+        })
+        
+        return {"result": email}
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc()}
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
