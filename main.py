@@ -41,7 +41,6 @@ class LeadInput(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
-    service: Optional[str] = None
     source: Optional[str] = "website"
     message: str = ""
 
@@ -56,7 +55,6 @@ async def receive_lead(lead_input: LeadInput):
             "name": lead_input.name,
             "email": lead_input.email,
             "phone": lead_input.phone or "",
-            "service": lead_input.service or "",
             "source": lead_input.source or "website",
             "original_message": lead_input.message,
             "channel": "email",
@@ -75,7 +73,7 @@ async def receive_lead(lead_input: LeadInput):
                 await send_email(
                     to=lead_input.email,
                     subject=f"Thanks for contacting us, {lead_input.name}!",
-                    body=f"Hi {lead_input.name}! Thanks for reaching out. We've received your message and will be in touch within 24 hours to discuss how we can help."
+                    body=f"Hi {lead_input.name}! Thanks for reaching out about {lead_input.message[:50]}... We've received your message and will be in touch within 24 hours!"
                 )
             except Exception as e:
                 print(f"Email error: {e}")
