@@ -13,13 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
+import httpx
 
 from integrations.supabase_client import supabase
 
 app = FastAPI(
     title="Lead Conversion System",
     description="AI-powered lead conversion with auto-response",
-    version="1.0.0"
+    version="1.0.1"
 )
 
 app.add_middleware(
@@ -43,9 +44,55 @@ class LeadInput(BaseModel):
     source: Optional[str] = "website"
     message: str = ""
 
+async def send_auto_email(to: str, name: str, message: str) -> dict:
+    """Send auto-response email using Resend API"""
+    api_key = os.getenv("RESEND_API_KEY")
+    
+    if not api_key:
+        return {"success": False, "error": "No API key"}
+    
+    payload = {
+        "from": "onboarding@resend.dev",
+        "to": [to],
+        "subject": f"Thanks for reaching out, {name}!",
+        "html": f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2>Hi {name}!</h2>
+            <p>Thanks for your interest! We've received your message:</p>
+            <blockquote style="border-left: 3px solid #ccc; padding-left: 15px; color: #666;">
+                "{message[:200]}{'...' if len(message) > 200 else ''}"
+            </blockquote>
+            <p>Our team will be in touch within 24 hours.</p>
+            <p>Best regards,<br>The Team</p>
+        </body>
+        </html>
+        """,
+        "text": f"Hi {name}!\n\nThanks for your interest! We've received your message: '{message[:200]}'\n\nOur team will be in touch within 24 hours.\n\nBest regards,\nThe Team"
+    }
+    
+    try:
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        
+        if response.status_code in [200, 201]:
+            return {"success": True, "id": response.json().get("id")}
+        else:
+            return {"success": False, "error": f"Status {response.status_code}: {response.text}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.post("/webhook/new-lead")
 async def receive_lead(lead_input: LeadInput):
     try:
+        # Save lead to database
         lead_data = {
             "client_id": lead_input.client_id,
             "name": lead_input.name,
@@ -70,20 +117,17 @@ async def receive_lead(lead_input: LeadInput):
             }).eq("id", lead_id).execute()
             
             # Send auto-response email
-            try:
-                from integrations.email import send_email
-                await send_email(
-                    to=lead_input.email,
-                    subject=f"Thanks for reaching out, {lead_input.name}!",
-                    body=f"Hi {lead_input.name}!\n\nThanks for your interest! We've received your message about: \"{lead_input.message[:100]}...\"\n\nOur team will be in touch within 24 hours.\n\nBest regards,\nThe Team"
-                )
-            except Exception as e:
-                print(f"Email error: {e}")
+            email_result = await send_auto_email(
+                to=lead_input.email,
+                name=lead_input.name,
+                message=lead_input.message
+            )
 
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "message": "Lead received! Check your email for our response."
+                "email_sent": email_result.get("success", False),
+                "message": "Lead received!" + (" Email sent." if email_result.get("success") else " Email failed.")
             }
 
         return {"status": "processed", "message": "Lead saved"}
@@ -172,24 +216,24 @@ async def get_leads():
 
 @app.get("/test-email")
 async def test_email():
-    try:
-        from integrations.email import send_email
-        result = await send_email(to="elitesmit@gmail.com", subject="Test Email", body="Test from Lead Conversion System")
-        return {"status": "sent" if result else "failed"}
-    except Exception as e:
-        return {"error": str(e)}
+    result = await send_auto_email(
+        to="elitesmit@gmail.com",
+        name="Test User",
+        message="This is a test email from the Lead Conversion System."
+    )
+    return result
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "version": "1.0.1"
     }
 
 @app.on_event("startup")
 async def startup():
-    print("Lead Conversion System started!")
+    print("Lead Conversion System v1.0.1 started!")
 
 if __name__ == "__main__":
     import uvicorn
