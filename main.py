@@ -131,18 +131,24 @@ async def receive_lead(lead_input: LeadInput):
             lead_id = response.data[0].get("id")
             
             # Send auto-response email
-            email_result = await send_auto_email(
-                lead_input.email,
-                lead_input.name,
-                lead_input.service or "your services",
-                lead_input.message
-            )
+            try:
+                email_result = await send_auto_email(
+                    lead_input.email,
+                    lead_input.name,
+                    lead_input.service or "your services",
+                    lead_input.message
+                )
+                email_sent = bool(email_result)
+                email_info = str(email_result) if email_result else "None"
+            except Exception as email_err:
+                email_sent = False
+                email_info = f"Error: {str(email_err)}"
             
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "email_sent": bool(email_result),
-                "email_result": str(email_result)
+                "email_sent": email_sent,
+                "email_result": email_info
             }
         
         return {"status": "processed", "message": "Lead saved"}
