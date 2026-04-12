@@ -5,7 +5,6 @@ Tracks behavior to adjust follow-up intensity
 from datetime import datetime
 
 
-# Score changes based on events
 SCORE_CHANGES = {
     "email_opened": +5,
     "email_link_clicked": +15,
@@ -26,24 +25,18 @@ async def update_interest_score(lead_id: str, event_type: str, metadata: dict = 
     """
     from integrations.supabase_client import get_lead, update_lead, log_event
     
-    # Get current lead data
-    leads = await get_lead(lead_id)
-    if not leads:
+    lead = await get_lead(lead_id)
+    if not lead:
         return None
     
-    lead = leads[0]
     current_score = lead.get("interest_score", 50)
     
-    # Get score change
     change = SCORE_CHANGES.get(event_type, 0)
     
-    # Apply change (keep between 0-100)
     new_score = max(0, min(100, current_score + change))
     
-    # Update lead
     await update_lead(lead_id, {"interest_score": new_score})
     
-    # Log event
     await log_event(lead_id, "score_updated", {
         "event_type": event_type,
         "old_score": current_score,
@@ -52,12 +45,10 @@ async def update_interest_score(lead_id: str, event_type: str, metadata: dict = 
         "metadata": metadata or {}
     })
     
-    # If they replied, route back to speed-to-lead for real-time response
     if event_type == "replied":
         from .speed_to_lead import speed_to_lead_agent
         from .orchestrator import get_app_graph
         
-        # Build state and process reply
         state = {
             "lead_id": lead_id,
             "name": lead.get("name", ""),
@@ -76,7 +67,6 @@ async def update_interest_score(lead_id: str, event_type: str, metadata: dict = 
             "client_config": {}
         }
         
-        # Process through agent
         graph = get_app_graph()
         await graph.ainvoke(state)
     
@@ -90,7 +80,7 @@ def get_score_description(score: int) -> str:
     elif score >= 60:
         return "Warm - Actively evaluating"
     elif score >= 40:
-        return " tepid - Need more nurturing"
+        return "Tepid - Need more nurturing"
     elif score >= 20:
         return "Cold - Low engagement"
     else:
@@ -99,4 +89,4 @@ def get_score_description(score: int) -> str:
 
 def should_skip_followup(score: int) -> bool:
     """Determine if we should skip follow-up based on score"""
-    return score < 10  # Skip if score is very low
+    return score < 10

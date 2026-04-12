@@ -6,14 +6,15 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 import asyncio
-
-load_dotenv()
 
 from integrations.supabase_client import supabase
 
@@ -31,103 +32,93 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for dashboard
 try:
     app.mount("/static", StaticFiles(directory="dashboard"), name="static")
 except:
     pass
 
 class LeadInput(BaseModel):
+    client_id: str
     name: str
     email: str
+    phone: Optional[str] = None
     company: Optional[str] = None
     service: Optional[str] = None
+    source: Optional[str] = "website"
     message: str = ""
 
 class LeadUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
 
-def generate_response_sync(name: str, service: str, message: str) -> str:
-    """Generate personalized response using Gemini"""
+async def process_lead_through_agents(lead_data: dict, client_config: dict):
+    """Process new lead through the LangGraph agent system"""
     try:
-        import google.generativeai as genai
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return f"Hi {name}! Thanks for reaching out. We'll be in touch within 24 hours."
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        from agents.orchestrator import get_app_graph
         
-        prompt = f"""Write a short, friendly email to a new lead.
-
-Lead name: {name}
-Service interested: {service}
-Message: {message}
-
-Write 2-3 sentences that thanks them and offers to schedule a call."""
-
-        response = model.generate_content(prompt)
-        return response.text
+        state = {
+            "lead_id": lead_data.get("id"),
+            "name": lead_data.get("name", ""),
+            "email": lead_data.get("email", ""),
+            "phone": lead_data.get("phone", ""),
+            "source": lead_data.get("source", "website"),
+            "message": lead_data.get("message", ""),
+            "channel": "email",
+            "status": "new",
+            "follow_up_count": 0,
+            "last_contact": datetime.utcnow().isoformat(),
+            "next_action": "speed_to_lead",
+            "conversation_history": [],
+            "interest_score": 50,
+            "client_id": lead_data.get("client_id", ""),
+            "client_config": client_config
+        }
+        
+        graph = get_app_graph()
+        result = await graph.ainvoke(state)
+        return result
     except Exception as e:
-        print(f"AI error: {e}")
-        return f"Hi {name}! Thanks for reaching out. We'll be in touch within 24 hours."
-
-def send_email_sync(to_email: str, name: str, service: str, message: str):
-    """Send email via Resend"""
-    try:
-        import resend
-        api_key = os.getenv("RESEND_API_KEY")
-
-        if not api_key:
-            print("No RESEND_API_KEY")
-            return None
-
-        resend.api_key = api_key
-
-        subject = f"Thanks for contacting us, {name}!"
-        body = generate_response_sync(name, service, message)
-
-        email = resend.Emails.send({
-            "from": "onboarding@resend.dev",
-            "to": to_email,
-            "subject": subject,
-            "html": f"<p>Hi {name},</p><p>{body}</p><p>Best regards,<br>The Team</p>"
-        })
-
-        return email
-    except Exception as e:
-        print(f"Email error: {e}")
+        print(f"Agent processing error: {e}")
         return None
 
 @app.post("/webhook/new-lead")
 async def receive_lead(lead_input: LeadInput):
-    """Webhook to receive leads - saves to contacts and sends auto-email"""
+    """Webhook to receive leads - saves to database and triggers agent processing"""
     try:
         lead_data = {
+            "client_id": lead_input.client_id,
             "name": lead_input.name,
             "email": lead_input.email,
+            "phone": lead_input.phone or "",
             "company": lead_input.company or "",
             "service": lead_input.service or "",
-            "message": lead_input.message
+            "source": lead_input.source or "website",
+            "original_message": lead_input.message,
+            "channel": "email",
+            "status": "new",
+            "interest_score": 50
         }
 
-        response = supabase.table("contacts").insert(lead_data).execute()
+        response = supabase.table("leads").insert(lead_data).execute()
 
         if response.data:
             lead_id = response.data[0].get("id")
-
-            email_result = send_email_sync(
-                lead_input.email,
-                lead_input.name,
-                lead_input.service or "your services",
-                lead_input.message
+            
+            from integrations.supabase_client import get_client
+            client = await get_client(lead_input.client_id)
+            client_config = client.get("config", {}) if client else {}
+            
+            asyncio.create_task(
+                process_lead_through_agents(
+                    {**lead_data, "id": lead_id},
+                    client_config
+                )
             )
 
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "email_sent": bool(email_result)
+                "message": "Lead received and processing started"
             }
 
         return {"status": "processed", "message": "Lead saved"}
@@ -181,7 +172,12 @@ async def dashboard():
             .btn { background: #6366f1; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
             .btn:hover { background: #8b5cf6; }
             .refresh-btn { margin-bottom: 16px; }
-            .email-badge { background: #22c55e20; color: #22c55e; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+            .status-badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+            .status-new { background: #3b82f620; color: #3b82f6; }
+            .status-contacted { background: #22c55e20; color: #22c55e; }
+            .status-nurturing { background: #f59e0b20; color: #f59e0b; }
+            .status-dead { background: #ef444420; color: #ef4444; }
+            .status-booked { background: #10b981; color: white; }
         </style>
     </head>
     <body>
@@ -202,8 +198,8 @@ async def dashboard():
                     <div class="stat-label">This Week</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value" id="emailsSent">-</div>
-                    <div class="stat-label">Emails Sent</div>
+                    <div class="stat-value" id="activeLeads">-</div>
+                    <div class="stat-label">Active (Contacted)</div>
                 </div>
             </div>
             
@@ -213,14 +209,14 @@ async def dashboard():
                 <table>
                     <thead>
                         <tr>
-                            <th>ID</th>
                             <th>Name</th>
                             <th>Email</th>
                             <th>Company</th>
-                            <th>Service</th>
-                            <th>Message</th>
+                            <th>Source</th>
+                            <th>Status</th>
+                            <th>Score</th>
+                            <th>Follow-ups</th>
                             <th>Created</th>
-                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody id="leadsBody">
@@ -236,7 +232,6 @@ async def dashboard():
                     const res = await fetch('/leads');
                     const data = await res.json();
                     
-                    // Update stats
                     document.getElementById('totalLeads').textContent = data.count;
                     
                     const today = new Date().toDateString();
@@ -248,9 +243,9 @@ async def dashboard():
                     const weekLeads = data.leads.filter(l => new Date(l.created_at) > weekAgo).length;
                     document.getElementById('thisWeek').textContent = weekLeads;
                     
-                    document.getElementById('emailsSent').textContent = data.count + ' auto';
+                    const activeLeads = data.leads.filter(l => ['contacted', 'nurturing'].includes(l.status)).length;
+                    document.getElementById('activeLeads').textContent = activeLeads;
                     
-                    // Render table
                     const tbody = document.getElementById('leadsBody');
                     if (data.leads.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #6b6b80;">No leads yet</td></tr>';
@@ -259,24 +254,20 @@ async def dashboard():
                     
                     tbody.innerHTML = data.leads.map(lead => `
                         <tr>
-                            <td>${lead.id}</td>
                             <td><strong>${lead.name || '-'}</strong></td>
                             <td>${lead.email || '-'}</td>
                             <td>${lead.company || '-'}</td>
-                            <td>${lead.service || '-'}</td>
-                            <td>${(lead.message || '-').substring(0, 30)}${lead.message && lead.message.length > 30 ? '...' : ''}</td>
+                            <td>${lead.source || '-'}</td>
+                            <td><span class="status-badge status-${lead.status}">${lead.status || 'new'}</span></td>
+                            <td>${lead.interest_score || 50}/100</td>
+                            <td>${lead.follow_up_count || 0}</td>
                             <td>${new Date(lead.created_at).toLocaleDateString()}</td>
-                            <td><button class="btn" onclick="sendFollowup(${lead.id}, '${lead.email}', '${lead.name.replace(/'/g, "\\\\'")}')">Follow-up</button></td>
                         </tr>
                     `).join('');
                 } catch (e) {
                     console.error('Error loading leads:', e);
                     document.getElementById('leadsBody').innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px; color: #ef4444;">Error loading leads</td></tr>';
                 }
-            }
-            
-            async function sendFollowup(id, email, name) {
-                alert('Sending follow-up to ' + name + ' at ' + email);
             }
             
             loadLeads();
@@ -290,28 +281,46 @@ async def dashboard():
 async def get_leads():
     """Get all leads"""
     try:
-        response = supabase.table("contacts").select("*").order("created_at", desc=True).execute()
+        response = supabase.table("leads").select("*").order("created_at", desc=True).execute()
         return {"leads": response.data, "count": len(response.data)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/leads/{lead_id}/followup")
-async def send_followup(lead_id: int):
-    """Send follow-up email to a lead"""
+async def send_followup(lead_id: str):
+    """Manually trigger follow-up for a lead"""
     try:
-        response = supabase.table("contacts").select("*").eq("id", lead_id).execute()
-        if not response.data:
+        from agents.follow_up_engine import follow_up_agent
+        from integrations.supabase_client import get_lead, get_client
+        
+        lead = await get_lead(lead_id)
+        if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
         
-        lead = response.data[0]
-        email_result = send_email_sync(
-            lead["email"],
-            lead["name"],
-            lead.get("service", "your services"),
-            lead.get("message", "")
-        )
+        client = await get_client(lead.get("client_id", ""))
+        client_config = client.get("config", {}) if client else {}
         
-        return {"status": "sent", "email_sent": bool(email_result)}
+        state = {
+            "lead_id": lead["id"],
+            "name": lead.get("name", ""),
+            "email": lead.get("email", ""),
+            "phone": lead.get("phone", ""),
+            "source": lead.get("source", ""),
+            "message": lead.get("original_message", ""),
+            "channel": lead.get("channel", "email"),
+            "status": lead.get("status", "contacted"),
+            "follow_up_count": lead.get("follow_up_count", 0),
+            "last_contact": lead.get("last_contact", datetime.utcnow().isoformat()),
+            "next_action": "follow_up",
+            "conversation_history": [],
+            "interest_score": lead.get("interest_score", 50),
+            "client_id": lead.get("client_id", ""),
+            "client_config": client_config
+        }
+        
+        result = await follow_up_agent(state)
+        
+        return {"status": "sent", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -319,55 +328,45 @@ async def send_followup(lead_id: int):
 async def test_email():
     """Test sending an email"""
     try:
-        import resend
-        api_key = os.getenv("RESEND_API_KEY")
-
-        if not api_key:
-            return {"error": "No RESEND_API_KEY"}
-
-        resend.api_key = api_key
-
-        email = resend.Emails.send({
-            "from": "onboarding@resend.dev",
-            "to": "elitesmit@gmail.com",
-            "subject": "Test Email from Lead System",
-            "html": "<p>This is a test email.</p>"
-        })
-
-        return {"result": email}
+        from integrations.email import send_email
+        
+        result = await send_email(
+            to="elitesmit@gmail.com",
+            subject="Test Email from Lead Conversion System",
+            body="This is a test email from the Lead Conversion System. If you receive this, your email integration is working!"
+        )
+        
+        return {"status": "sent" if result else "failed"}
     except Exception as e:
         return {"error": str(e)}
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
-
-# Background scheduler for follow-ups
-async def check_followups():
-    """Check for leads needing follow-up (runs every hour)"""
-    while True:
-        try:
-            print(f"[SCHEDULER] Checking follow-ups at {datetime.utcnow().isoformat()}")
-            
-            # Get leads older than 24 hours without follow-up
-            yesterday = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-            
-            response = supabase.table("contacts").select("*").lt("created_at", yesterday).execute()
-            
-            for lead in response.data:
-                print(f"[SCHEDULER] Would send follow-up to {lead.get('name', 'Unknown')}")
-            
-            await asyncio.sleep(3600)
-        except Exception as e:
-            print(f"[SCHEDULER] Error: {e}")
-            await asyncio.sleep(3600)
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0"
+    }
 
 @app.on_event("startup")
 async def startup():
     """Start background scheduler"""
     asyncio.create_task(check_followups())
     print("Lead Conversion System started!")
+
+async def check_followups():
+    """Check for leads needing follow-up (runs every hour)"""
+    from agents.scheduler import process_due_followups
+    
+    while True:
+        try:
+            print(f"[SCHEDULER] Checking follow-ups at {datetime.utcnow().isoformat()}")
+            await process_due_followups()
+            await asyncio.sleep(3600)
+        except Exception as e:
+            print(f"[SCHEDULER] Error: {e}")
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     import uvicorn

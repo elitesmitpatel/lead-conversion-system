@@ -3,12 +3,11 @@ Lead Conversion System - LangGraph Orchestrator
 Routes leads to the appropriate agent based on their status
 """
 from typing import TypedDict, Literal
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from datetime import datetime
 import os
 import asyncio
 
-# Import all agents
 from .speed_to_lead import speed_to_lead_agent
 from .follow_up_engine import follow_up_agent
 from .database_reactivation import reactivation_agent
@@ -24,7 +23,7 @@ class LeadState(TypedDict):
     source: str
     message: str
     channel: str
-    status: Literal["new", "contacted", "nurturing", "booked", "dead", "won"]
+    status: str
     follow_up_count: int
     last_contact: str
     next_action: str
@@ -34,9 +33,10 @@ class LeadState(TypedDict):
     client_config: dict
 
 
-def route_lead(state: LeadState) -> str:
+def router(state: LeadState) -> str:
     """
     Central router - decides which agent handles this lead
+    Returns the name of the next node to call
     """
     status = state.get("status", "new")
     next_action = state.get("next_action", "")
@@ -44,84 +44,100 @@ def route_lead(state: LeadState) -> str:
     
     if next_action == "speed_to_lead" or status == "new":
         return "speed_to_lead"
-    elif next_action == "follow_up" or (status == "contacted" and follow_up_count < 10):
+    elif next_action == "follow_up" or (status in ["contacted", "nurturing"] and follow_up_count < 10):
         return "follow_up_engine"
     elif next_action == "reactivation" or status == "dead":
         return "database_reactivation"
     elif next_action == "sync_crm":
         return "crm_integration"
     else:
-        return END
+        return "END"
 
 
-def should_continue(state: LeadState) -> Literal["continue", "end"]:
-    """Determine if we should continue the conversation"""
+def should_continue(state: LeadState) -> str:
+    """Determine if we should continue the conversation or end"""
     status = state.get("status", "new")
+    next_action = state.get("next_action", "")
     
-    if status in ["booked", "won", "lost", "dead"]:
-        return "end"
-    return "continue"
+    if next_action == "speed_to_lead":
+        return "speed_to_lead"
+    elif next_action == "follow_up":
+        return "follow_up_engine"
+    elif next_action == "reactivation":
+        return "database_reactivation"
+    elif next_action == "sync_crm":
+        return "crm_integration"
+    elif status in ["booked", "won", "lost", "dead"]:
+        return "END"
+    else:
+        return "END"
 
 
 def build_graph():
     """
     Build the LangGraph state machine
     """
-    # Create the graph
     graph = StateGraph(LeadState)
     
-    # Add nodes
+    graph.add_node("router", router)
     graph.add_node("speed_to_lead", speed_to_lead_agent)
     graph.add_node("follow_up_engine", follow_up_agent)
     graph.add_node("database_reactivation", reactivation_agent)
     graph.add_node("crm_integration", crm_sync_agent)
     
-    # Set entry point
-    graph.set_entry_point("router")
+    graph.set_entry_point("speed_to_lead")
     
-    # Add conditional routing
     graph.add_conditional_edges(
-        "router",
-        route_lead,
+        "speed_to_lead",
+        should_continue,
         {
             "speed_to_lead": "speed_to_lead",
             "follow_up_engine": "follow_up_engine",
             "database_reactivation": "database_reactivation",
             "crm_integration": "crm_integration",
-            END: END
+            "END": END
         }
-    )
-    
-    # After each agent completes, check if we should continue
-    graph.add_conditional_edges(
-        "speed_to_lead",
-        should_continue,
-        {"continue": "router", "end": END}
     )
     
     graph.add_conditional_edges(
         "follow_up_engine",
         should_continue,
-        {"continue": "router", "end": END}
+        {
+            "speed_to_lead": "speed_to_lead",
+            "follow_up_engine": "follow_up_engine",
+            "database_reactivation": "database_reactivation",
+            "crm_integration": "crm_integration",
+            "END": END
+        }
     )
     
     graph.add_conditional_edges(
         "database_reactivation",
         should_continue,
-        {"continue": "follow_up_engine", "end": END}
+        {
+            "speed_to_lead": "speed_to_lead",
+            "follow_up_engine": "follow_up_engine",
+            "database_reactivation": "database_reactivation",
+            "crm_integration": "crm_integration",
+            "END": END
+        }
     )
     
     graph.add_conditional_edges(
         "crm_integration",
         should_continue,
-        {"continue": "router", "end": END}
+        {
+            "speed_to_lead": "speed_to_lead",
+            "follow_up_engine": "follow_up_engine",
+            "database_reactivation": "database_reactivation",
+            "crm_integration": "crm_integration",
+            "END": END
+        }
     )
     
-    # Compile the graph
     return graph.compile()
 
 
-# Singleton graph instance
 _app_graph = None
 
 
@@ -131,3 +147,37 @@ def get_app_graph():
     if _app_graph is None:
         _app_graph = build_graph()
     return _app_graph
+
+
+async def process_lead(lead_data: dict, client_config: dict = None) -> dict:
+    """
+    Process a lead through the agent system
+    This is the main entry point for processing new leads
+    """
+    from integrations.supabase_client import create_lead, get_client
+    
+    if not client_config:
+        client = await get_client(lead_data.get("client_id", ""))
+        client_config = client.get("config", {}) if client else {}
+    
+    state = LeadState(
+        lead_id=lead_data.get("id", ""),
+        name=lead_data.get("name", ""),
+        email=lead_data.get("email", ""),
+        phone=lead_data.get("phone", ""),
+        source=lead_data.get("source", "website"),
+        message=lead_data.get("message", ""),
+        channel=lead_data.get("channel", "email"),
+        status=lead_data.get("status", "new"),
+        follow_up_count=lead_data.get("follow_up_count", 0),
+        last_contact=datetime.utcnow().isoformat(),
+        next_action="speed_to_lead",
+        conversation_history=[],
+        interest_score=lead_data.get("interest_score", 50),
+        client_id=lead_data.get("client_id", ""),
+        client_config=client_config
+    )
+    
+    graph = get_app_graph()
+    result = await graph.ainvoke(state)
+    return result
