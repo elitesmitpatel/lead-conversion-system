@@ -62,10 +62,28 @@ async def receive_lead(lead_input: LeadInput):
 
         if response.data:
             lead_id = response.data[0].get("id")
+            
+            # Update status to contacted
+            supabase.table("leads").update({
+                "status": "contacted",
+                "last_contact": datetime.utcnow().isoformat()
+            }).eq("id", lead_id).execute()
+            
+            # Send auto-response email
+            try:
+                from integrations.email import send_email
+                await send_email(
+                    to=lead_input.email,
+                    subject=f"Thanks for reaching out, {lead_input.name}!",
+                    body=f"Hi {lead_input.name}!\n\nThanks for your interest! We've received your message about: \"{lead_input.message[:100]}...\"\n\nOur team will be in touch within 24 hours.\n\nBest regards,\nThe Team"
+                )
+            except Exception as e:
+                print(f"Email error: {e}")
+
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "message": "Lead received!"
+                "message": "Lead received! Check your email for our response."
             }
 
         return {"status": "processed", "message": "Lead saved"}
@@ -119,8 +137,8 @@ async def dashboard():
             </div>
             <div class="leads-table">
                 <table>
-                    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Created</th></tr></thead>
-                    <tbody id="leadsBody"><tr><td colspan="4" style="text-align:center;padding:40px;color:#6b6b80;">Loading...</td></tr></tbody>
+                    <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Score</th><th>Created</th></tr></thead>
+                    <tbody id="leadsBody"><tr><td colspan="5" style="text-align:center;padding:40px;color:#6b6b80;">Loading...</td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -134,9 +152,9 @@ async def dashboard():
                     document.getElementById('todayLeads').textContent = data.leads.filter(l => new Date(l.created_at).toDateString() === today).length;
                     document.getElementById('activeLeads').textContent = data.leads.filter(l => ['contacted','nurturing'].includes(l.status)).length;
                     const tbody = document.getElementById('leadsBody');
-                    if (data.leads.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:40px;color:#6b6b80;">No leads yet</td></tr>'; return; }
-                    tbody.innerHTML = data.leads.map(l => `<tr><td><strong>${l.name||'-'}</strong></td><td>${l.email||'-'}</td><td>${l.status||'new'}</td><td>${new Date(l.created_at).toLocaleDateString()}</td></tr>`).join('');
-                } catch (e) { document.getElementById('leadsBody').innerHTML = '<tr><td colspan="4" style="color:#ef4444;">Error loading leads</td></tr>'; }
+                    if (data.leads.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:#6b6b80;">No leads yet</td></tr>'; return; }
+                    tbody.innerHTML = data.leads.map(l => `<tr><td><strong>${l.name||'-'}</strong></td><td>${l.email||'-'}</td><td>${l.status||'new'}</td><td>${l.interest_score||50}</td><td>${new Date(l.created_at).toLocaleDateString()}</td></tr>`).join('');
+                } catch (e) { document.getElementById('leadsBody').innerHTML = '<tr><td colspan="5" style="color:#ef4444;">Error loading leads</td></tr>'; }
             }
             loadLeads(); setInterval(loadLeads, 30000);
         </script>
