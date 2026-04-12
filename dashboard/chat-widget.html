@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lead Chat Widget</title>
+    <style>
+        /* Widget container styles - embedded on client websites */
+        #lcw-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 99999;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* Toggle button */
+        #lcw-toggle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #6366f1;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #lcw-toggle:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.5);
+        }
+
+        #lcw-toggle svg {
+            width: 28px;
+            height: 28px;
+            fill: white;
+        }
+
+        #lcw-toggle .close-icon {
+            display: none;
+        }
+
+        #lcw-toggle.open .chat-icon {
+            display: none;
+        }
+
+        #lcw-toggle.open .close-icon {
+            display: block;
+        }
+
+        /* Chat panel */
+        #lcw-panel {
+            position: absolute;
+            bottom: 80px;
+            right: 0;
+            width: 380px;
+            height: 520px;
+            border-radius: 16px;
+            background: #1a1a25;
+            box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #2a2a3a;
+        }
+
+        #lcw-panel.open {
+            display: flex;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Header */
+        #lcw-header {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #lcw-header-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        #lcw-header-text h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        #lcw-header-text p {
+            margin: 2px 0 0;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        /* Messages area */
+        #lcw-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .lcw-msg {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .lcw-msg.bot {
+            background: #2a2a3a;
+            color: #e8e8f0;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .lcw-msg.user {
+            background: #6366f1;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .lcw-msg .timestamp {
+            font-size: 10px;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        /* Typing indicator */
+        #lcw-typing {
+            display: none;
+            padding: 12px 16px;
+            background: #2a2a3a;
+            border-radius: 16px;
+            border-bottom-left-radius: 4px;
+            align-self: flex-start;
+            width: fit-content;
+        }
+
+        #lcw-typing.show {
+            display: flex;
+            gap: 4px;
+        }
+
+        #lcw-typing span {
+            width: 8px;
+            height: 8px;
+            background: #6b6b80;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+
+        #lcw-typing span:nth-child(1) { animation-delay: 0s; }
+        #lcw-typing span:nth-child(2) { animation-delay: 0.2s; }
+        #lcw-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-8px); }
+        }
+
+        /* Input area */
+        #lcw-input-area {
+            padding: 12px;
+            border-top: 1px solid #2a2a3a;
+            display: flex;
+            gap: 8px;
+            background: #12121a;
+        }
+
+        #lcw-input {
+            flex: 1;
+            border: 1px solid #2a2a3a;
+            border-radius: 24px;
+            padding: 10px 16px;
+            font-size: 14px;
+            background: #1a1a25;
+            color: #e8e8f0;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #lcw-input:focus {
+            border-color: #6366f1;
+        }
+
+        #lcw-input::placeholder {
+            color: #6b6b80;
+        }
+
+        #lcw-send {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #6366f1;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        #lcw-send:hover {
+            background: #8b5cf6;
+        }
+
+        #lcw-send svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+
+        /* Welcome screen */
+        #lcw-welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        #lcw-welcome h3 {
+            color: #e8e8f0;
+            margin: 20px 0 8px;
+            font-size: 20px;
+        }
+
+        #lcw-welcome p {
+            color: #6b6b80;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        #lcw-welcome button {
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #lcw-welcome button:hover {
+            background: #8b5cf6;
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 480px) {
+            #lcw-panel {
+                width: calc(100vw - 32px);
+                height: calc(100vh - 120px);
+                right: -16px;
+                bottom: 80px;
+                border-radius: 12px;
+            }
+            
+            #lcw-container {
+                bottom: 16px;
+                right: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="lcw-container">
+        <button id="lcw-toggle">
+            <svg class="chat-icon" viewBox="0 0 24 24">
+                <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+            </svg>
+            <svg class="close-icon" viewBox="0 0 24 24">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+            </svg>
+        </button>
+        
+        <div id="lcw-panel">
+            <div id="lcw-header">
+                <div id="lcw-header-avatar">🤖</div>
+                <div id="lcw-header-text">
+                    <h3>Chat with Us</h3>
+                    <p>We reply within minutes</p>
+                </div>
+            </div>
+            
+            <div id="lcw-welcome">
+                <div style="font-size: 48px;">💬</div>
+                <h3>Welcome!</h3>
+                <p>Start a conversation with our team</p>
+                <button onclick="startChat()">Start Chat</button>
+            </div>
+            
+            <div id="lcw-messages" style="display: none;">
+                <!-- Messages will appear here -->
+            </div>
+            
+            <div id="lcw-typing">
+                <span></span><span></span><span></span>
+            </div>
+            
+            <div id="lcw-input-area" style="display: none;">
+                <input id="lcw-input" placeholder="Type a message..." />
+                <button id="lcw-send">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - set by the embedding page
+        const LCW_CONFIG = {
+            clientId: 'CLIENT_ID_HERE',  // Replace with actual client ID
+            agencyName: 'Our Agency',
+            apiUrl: 'https://your-app.com',
+            primaryColor: '#6366f1',
+            position: 'bottom-right'
+        };
+
+        // Session management
+        let sessionId = localStorage.getItem('lcw_session') || null;
+        if (!sessionId) {
+            sessionId = crypto.randomUUID();
+            localStorage.setItem('lcw_session', sessionId);
+        }
+
+        let leadId = localStorage.getItem('lcw_lead_id') || null;
+        let chatStarted = false;
+
+        // DOM Elements
+        const toggle = document.getElementById('lcw-toggle');
+        const panel = document.getElementById('lcw-panel');
+        const welcome = document.getElementById('lcw-welcome');
+        const messages = document.getElementById('lcw-messages');
+        const inputArea = document.getElementById('lcw-input-area');
+        const input = document.getElementById('lcw-input');
+        const sendBtn = document.getElementById('lcw-send');
+        const typing = document.getElementById('lcw-typing');
+
+        // Toggle chat panel
+        toggle.addEventListener('click', () => {
+            toggle.classList.toggle('open');
+            panel.classList.toggle('open');
+        });
+
+        // Start chat
+        function startChat() {
+            chatStarted = true;
+            welcome.style.display = 'none';
+            messages.style.display = 'flex';
+            inputArea.style.display = 'flex';
+            
+            // Send welcome message
+            addMessage('bot', "Hi there! 👋 How can we help you today?");
+            input.focus();
+        }
+
+        // Add message to chat
+        function addMessage(role, content) {
+            const msg = document.createElement('div');
+            msg.className = `lcw-msg ${role}`;
+            msg.innerHTML = `
+                ${content}
+                <div class="timestamp">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+            `;
+            messages.appendChild(msg);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Show typing indicator
+        function showTyping() {
+            typing.classList.add('show');
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Hide typing indicator
+        function hideTyping() {
+            typing.classList.remove('show');
+        }
+
+        // Send message
+        async function sendMessage() {
+            const content = input.value.trim();
+            if (!content) return;
+
+            // Add user message
+            addMessage('user', content);
+            input.value = '';
+
+            // Show typing
+            showTyping();
+
+            try {
+                const response = await fetch(`${LCW_CONFIG.apiUrl}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        client_id: LCW_CONFIG.clientId,
+                        message: content,
+                        lead_id: leadId,
+                        session_id: sessionId
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Hide typing and show response
+                hideTyping();
+                
+                if (data.reply) {
+                    addMessage('bot', data.reply);
+                } else {
+                    addMessage('bot', "Thanks for your message! Our team will be in touch shortly.");
+                }
+
+                // Store lead ID for future messages
+                if (data.lead_id) {
+                    leadId = data.lead_id;
+                    localStorage.setItem('lcw_lead_id', leadId);
+                }
+
+            } catch (error) {
+                console.error('Error sending message:', error);
+                hideTyping();
+                addMessage('bot', "Sorry, we're having trouble right now. Please try again or email us directly.");
+            }
+        }
+
+        // Event listeners
+        sendBtn.addEventListener('click', sendMessage);
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Prevent form submission on enter
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+            }
+        });
+    </script>
+</body>
+</html>
