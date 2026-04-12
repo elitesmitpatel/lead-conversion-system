@@ -133,7 +133,8 @@ async def receive_lead(lead_input: LeadInput):
             return {
                 "status": "processed",
                 "lead_id": lead_id,
-                "email_sent": bool(email_result)
+                "email_sent": bool(email_result),
+                "email_result": str(email_result)
             }
         
         return {"status": "processed", "message": "Lead saved"}
