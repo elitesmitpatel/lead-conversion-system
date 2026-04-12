@@ -95,7 +95,7 @@ async def send_auto_email(to_email: str, name: str, service: str, message: str):
         subject = f"Thanks for contacting us, {name}!"
         body = await generate_auto_response(name, service, message)
         
-        email = resend.emails.send({
+        email = resend.Emails.send({
             "from": "onboarding@resend.dev",
             "to": to_email,
             "subject": subject,
@@ -188,7 +188,7 @@ async def test_email():
         resend.api_key = api_key
         
         # Send test email
-        email = resend.emails.send({
+        email = resend.Emails.send({
             "from": "onboarding@resend.dev",
             "to": "elitesmit@gmail.com",
             "subject": "Test Email from Lead System",
