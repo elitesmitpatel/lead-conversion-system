@@ -151,6 +151,15 @@ async def get_leads():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/debug")
+async def debug_env():
+    """Debug environment variables"""
+    return {
+        "gemini_key_set": bool(os.getenv("GEMINI_API_KEY")),
+        "resend_key_set": bool(os.getenv("RESEND_API_KEY")),
+        "resend_key_value": os.getenv("RESEND_API_KEY", "NOT SET")[:15] + "..."
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
