@@ -1,0 +1,9 @@
+{
+  "client_id": "test-client",
+  "name": "John Test",
+  "email": "john@test.com",
+  "phone": "+1234567890",
+  "source": "website",
+  "message": "Interested in marketing services",
+  "channel": "email"
+}

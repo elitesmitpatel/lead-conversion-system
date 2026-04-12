@@ -4,3 +4,5 @@ uvicorn
 supabase
 python-dotenv
 pydantic
+google-generativeai
+resend

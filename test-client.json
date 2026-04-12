@@ -1,0 +1,10 @@
+{
+  "agency_name": "Test Marketing Agency",
+  "email": "test@agency.com",
+  "calcom_link": "https://cal.com/test-agency",
+  "config": {
+    "primary_channel": "email",
+    "tone": "professional",
+    "timezone": "America/New_York"
+  }
+}
