@@ -3,7 +3,7 @@ Lead Conversion System - Main Application
 FastAPI application for receiving leads with AI auto-response
 """
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -14,10 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
-import asyncio
-
-print(f"[STARTUP] SUPABASE_URL: {os.getenv('SUPABASE_URL', 'NOT SET')}")
-print(f"[STARTUP] SUPABASE_KEY: {'SET' if os.getenv('SUPABASE_SERVICE_ROLE_KEY') else 'NOT SET'}")
 
 from integrations.supabase_client import supabase
 
@@ -45,18 +41,12 @@ class LeadInput(BaseModel):
     name: str
     email: str
     phone: Optional[str] = None
-    company: Optional[str] = None
     service: Optional[str] = None
     source: Optional[str] = "website"
     message: str = ""
 
-class LeadUpdate(BaseModel):
-    status: Optional[str] = None
-    notes: Optional[str] = None
-
 @app.post("/webhook/new-lead")
 async def receive_lead(lead_input: LeadInput):
-    """Webhook to receive leads - saves to database and sends auto-response"""
     try:
         if supabase is None:
             raise HTTPException(status_code=500, detail="Database not configured")
@@ -66,7 +56,6 @@ async def receive_lead(lead_input: LeadInput):
             "name": lead_input.name,
             "email": lead_input.email,
             "phone": lead_input.phone or "",
-            "company": lead_input.company or "",
             "service": lead_input.service or "",
             "source": lead_input.source or "website",
             "original_message": lead_input.message,
@@ -75,24 +64,21 @@ async def receive_lead(lead_input: LeadInput):
             "interest_score": 50
         }
 
-        print(f"[WEBHOOK] Saving lead: {lead_input.name} ({lead_input.email})")
         response = supabase.table("leads").insert(lead_data).execute()
-        print(f"[WEBHOOK] Response: {response.data}")
 
         if response.data:
             lead_id = response.data[0].get("id")
             
-            # Send auto-response
+            # Send auto-response email
             try:
                 from integrations.email import send_email
                 await send_email(
                     to=lead_input.email,
                     subject=f"Thanks for contacting us, {lead_input.name}!",
-                    body=f"Hi {lead_input.name}! Thanks for reaching out. We'll be in touch within 24 hours!"
+                    body=f"Hi {lead_input.name}! Thanks for reaching out. We've received your message and will be in touch within 24 hours to discuss how we can help."
                 )
-                print(f"[WEBHOOK] Email sent to {lead_input.email}")
-            except Exception as email_err:
-                print(f"[WEBHOOK] Email error: {email_err}")
+            except Exception as e:
+                print(f"Email error: {e}")
 
             return {
                 "status": "processed",
@@ -103,9 +89,6 @@ async def receive_lead(lead_input: LeadInput):
         return {"status": "processed", "message": "Lead saved"}
 
     except Exception as e:
-        print(f"[WEBHOOK ERROR] {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
@@ -183,7 +166,7 @@ async def dashboard():
 async def get_leads():
     try:
         if supabase is None:
-            return {"leads": [], "count": 0, "error": "Database not configured"}
+            return {"leads": [], "count": 0}
         response = supabase.table("leads").select("*").order("created_at", desc=True).execute()
         return {"leads": response.data, "count": len(response.data)}
     except Exception as e:
@@ -203,8 +186,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0",
-        "supabase_configured": supabase is not None
+        "version": "1.0.0"
     }
 
 @app.on_event("startup")
