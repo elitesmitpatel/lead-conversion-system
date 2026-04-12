@@ -1,6 +1,5 @@
 """
 Lead Conversion System - Main Application
-FastAPI application for receiving leads with AI auto-response
 """
 import os
 from datetime import datetime
@@ -47,9 +46,6 @@ class LeadInput(BaseModel):
 @app.post("/webhook/new-lead")
 async def receive_lead(lead_input: LeadInput):
     try:
-        if supabase is None:
-            raise HTTPException(status_code=500, detail="Database not configured")
-        
         lead_data = {
             "client_id": lead_input.client_id,
             "name": lead_input.name,
@@ -66,18 +62,6 @@ async def receive_lead(lead_input: LeadInput):
 
         if response.data:
             lead_id = response.data[0].get("id")
-            
-            # Send auto-response email
-            try:
-                from integrations.email import send_email
-                await send_email(
-                    to=lead_input.email,
-                    subject=f"Thanks for contacting us, {lead_input.name}!",
-                    body=f"Hi {lead_input.name}! Thanks for reaching out about {lead_input.message[:50]}... We've received your message and will be in touch within 24 hours!"
-                )
-            except Exception as e:
-                print(f"Email error: {e}")
-
             return {
                 "status": "processed",
                 "lead_id": lead_id,
@@ -87,7 +71,7 @@ async def receive_lead(lead_input: LeadInput):
         return {"status": "processed", "message": "Lead saved"}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "detail": str(e)}
 
 @app.get("/")
 async def root():
@@ -163,8 +147,6 @@ async def dashboard():
 @app.get("/leads")
 async def get_leads():
     try:
-        if supabase is None:
-            return {"leads": [], "count": 0}
         response = supabase.table("leads").select("*").order("created_at", desc=True).execute()
         return {"leads": response.data, "count": len(response.data)}
     except Exception as e:
