@@ -131,6 +131,7 @@ async def receive_lead(lead_input: LeadInput):
             lead_id = response.data[0].get("id")
             
             # Send auto-response email
+            print(f"[WEBHOOK] Calling send_auto_email for {lead_input.email}")
             try:
                 email_result = await send_auto_email(
                     lead_input.email,
@@ -138,9 +139,11 @@ async def receive_lead(lead_input: LeadInput):
                     lead_input.service or "your services",
                     lead_input.message
                 )
+                print(f"[WEBHOOK] Email result: {email_result}")
                 email_sent = bool(email_result)
                 email_info = str(email_result) if email_result else "None"
             except Exception as email_err:
+                print(f"[WEBHOOK] Email error: {email_err}")
                 email_sent = False
                 email_info = f"Error: {str(email_err)}"
             
