@@ -75,6 +75,7 @@ Keep it short (under 100 words)."""
 
 async def send_auto_email(to_email: str, name: str, service: str, message: str):
     """Send auto-response email via Resend"""
+    print(f"[EMAIL] Attempting to send to {to_email}")
     try:
         import resend
         api_key = os.getenv("RESEND_API_KEY")
@@ -82,6 +83,8 @@ async def send_auto_email(to_email: str, name: str, service: str, message: str):
         if not api_key:
             print(f"[EMAIL] No API key configured")
             return None
+        
+        print(f"[EMAIL] API key found: {api_key[:10]}...")
         
         if api_key == "re_test":
             print(f"[EMAIL] Test mode - would send to {to_email}")
@@ -98,11 +101,16 @@ async def send_auto_email(to_email: str, name: str, service: str, message: str):
             "subject": subject,
             "html": f"<p>Hi {name},</p><p>{body}</p><p>Best regards,<br>The Team</p>"
         })
-        print(f"[EMAIL] Sent to {to_email}: {email}")
+        print(f"[EMAIL] Resend result: {email}")
+        if isinstance(email, dict) and "id" in email:
+            print(f"[EMAIL] SUCCESS - email sent with ID: {email['id']}")
+            return email
         return email
     
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print(f"[EMAIL] Exception: {e}")
+        import traceback
+        print(f"[EMAIL] Traceback: {traceback.format_exc()}")
         return None
 
 @app.post("/webhook/new-lead")
